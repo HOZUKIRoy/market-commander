@@ -106,3 +106,45 @@ with col2:
 
 st.divider()
 st.write("※超長期成績規約：半分投入は禁止。Score > 0 かつ Energy OK の場合のみフルコミットする。")
+
+# --- 5. 視覚的検証：0基準相対チャート ---
+st.subheader("📊 タイムトラベル分析（0基準相対比較）")
+
+# 表示モードの選択
+mode = st.radio("表示基準（アンカー）を選択してください:", 
+                ["CLR基準 (1年前を0%)", "CM基準 (1ヶ月前を0%)"], horizontal=True)
+
+anchor_val = 252 if "CLR" in mode else 21
+
+# グラフ化する銘柄の選択（デフォルトでScore上位5つ）
+selected_tickers = st.multiselect("銘柄を選択:", TICKERS, default=df_res.index[:5].tolist())
+
+if selected_tickers:
+    fig = go.Figure()
+    for t in selected_tickers:
+        p = data[t]
+        ref_price = p.iloc[-anchor_val]
+        # 騰落率の計算
+        rel_p = (p / ref_price - 1) * 100
+        
+        fig.add_trace(go.Scatter(x=p.index, y=rel_p, name=t, hovertemplate='%{y:.2f}%'))
+
+        # 200MAも相対化して表示（オプション：地盤の確認用）
+        ma200_rel = (p.rolling(200).mean() / ref_price - 1) * 100
+        fig.add_trace(go.Scatter(x=p.index, y=ma200_rel, name=f"{t}(200MA)", 
+                                 line=dict(dash='dot', width=1), visible='legendonly'))
+
+    # 基準線（0%）
+    fig.add_hline(y=0, line_dash="solid", line_color="white", line_width=2)
+    
+    fig.update_layout(
+        title=f"【{mode}】 期待値とトレンドの可視化",
+        yaxis_title="騰落率 (%)",
+        xaxis_title="日付",
+        hovermode="x unified",
+        template="plotly_dark",
+        height=500
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+st.caption("※200MAは凡例をクリックすると表示されます。価格が0%（基準線）より下にあり、かつ200MAより大きく乖離しているほどCLRの期待値は高まります。")
