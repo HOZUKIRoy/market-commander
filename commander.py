@@ -107,7 +107,8 @@ with col2:
 st.divider()
 st.write("※超長期成績規約：半分投入は禁止。Score > 0 かつ Energy OK の場合のみフルコミットする。")
 
-# --- 5. 視覚的検証：0基準相対チャート ---
+# --- 5. 視覚的検証：0基準相対チャート（修正版） ---
+st.divider()
 st.subheader("📊 タイムトラベル分析（0基準相対比較）")
 
 # 表示モードの選択
@@ -116,12 +117,19 @@ mode = st.radio("表示基準（アンカー）を選択してください:",
 
 anchor_val = 252 if "CLR" in mode else 21
 
-# グラフ化する銘柄の選択（デフォルトでScore上位5つ）
-selected_tickers = st.multiselect("銘柄を選択:", TICKERS, default=df_res.index[:5].tolist())
+# 判定結果から表示用のデータフレームを一時作成
+df_for_plot = pd.DataFrame(clr_results).set_index("Ticker")
+
+# グラフ化する銘柄の選択（Scoreが高い順にデフォルト表示）
+# 変数名を df_for_plot に統一して NameError を回避
+default_selected = df_for_plot.sort_values("Score", ascending=False).index[:5].tolist()
+selected_tickers = st.multiselect("銘柄を選択:", TICKERS, default=default_selected)
 
 if selected_tickers:
+    import plotly.graph_objects as go
     fig = go.Figure()
     for t in selected_tickers:
+        if t not in data.columns: continue
         p = data[t]
         ref_price = p.iloc[-anchor_val]
         # 騰落率の計算
@@ -129,7 +137,7 @@ if selected_tickers:
         
         fig.add_trace(go.Scatter(x=p.index, y=rel_p, name=t, hovertemplate='%{y:.2f}%'))
 
-        # 200MAも相対化して表示（オプション：地盤の確認用）
+        # 200MAも相対化して表示
         ma200_rel = (p.rolling(200).mean() / ref_price - 1) * 100
         fig.add_trace(go.Scatter(x=p.index, y=ma200_rel, name=f"{t}(200MA)", 
                                  line=dict(dash='dot', width=1), visible='legendonly'))
