@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 # 1. 規約設定
 # ==========================================================
 st.set_page_config(layout="wide", page_title="Universal Asset Commander")
-st.title("🚀 超長期成績最大化：統合司令部 (High-Visibility Ver.)")
+st.title("🚀 超長期成績最大化：統合司令部 (Ascending/Value Ver.)")
 
 TICKER_MAP = {"N225": "1321.T", "TPX": "1306.T", "JREIT": "1343.T", "GROW": "2516.T", "JDEF": "1399.T", "JVLU": "1593.T", "JQ": "2636.T"}
 TICKERS = ["SPY", "QQQ", "NOBL", "FDD", "VWO", "N225", "TPX", "GROW", "JDEF", "VT", "VTV", "MTUM", "QUAL", "JVLU", "JQ", "FEZ", "VNQI", "SCHD", "VYM", "JREIT", "GLD", "SLV", "TLT"]
@@ -42,7 +42,7 @@ def get_sigma_down(series):
     downside_rets = series[series < 0]
     return downside_rets.std() * np.sqrt(252)
 
-# VT基準値
+# VT基準値計算
 vt_p = data["VT"]
 vt_cm_raw = (vt_p.iloc[-21] / vt_p.iloc[-21-63]) - 1
 vt_sigma_all = rets["VT"].std() * np.sqrt(252)
@@ -84,7 +84,7 @@ with col2:
     st.dataframe(df_cm)
 
 st.divider()
-mode = st.radio("表示:", ["CLR基準 (1年前=0% / 6y)", "CM基準 (1ヶ月前=0% / 1.5y)"], horizontal=True)
+mode = st.radio("表示基準:", ["CLR基準 (1年前=0% / 6y)", "CM基準 (1ヶ月前=0% / 1.5y)"], horizontal=True)
 selected = st.multiselect("銘柄選択:", TICKERS, default=["SPY", "VT", "GLD"])
 
 if selected:
@@ -92,7 +92,7 @@ if selected:
     anchor_days = 252 if "CLR" in mode else 21
     start_view = data.index[0] if "CLR" in mode else data.index[-378]
     
-    # 凡例を降順（現在値が高い順）にするためのソート用リスト
+    # 昇順（現在値が低い順）にソート
     plot_data = []
     for t in selected:
         p_series = data[t]
@@ -100,10 +100,9 @@ if selected:
         rel = (p_series / ref - 1) * 100
         plot_data.append({"ticker": t, "series": rel, "last_val": rel.iloc[-1]})
     
-    # 降順ソート
-    plot_data.sort(key=lambda x: x["last_val"], reverse=True)
+    # ここを「昇順」に変更
+    plot_data.sort(key=lambda x: x["last_val"], reverse=False)
     
-    # 配色設定 (鮮やかなパレットを使用)
     colors = px.colors.qualitative.Plotly
 
     for i, item in enumerate(plot_data):
@@ -111,6 +110,7 @@ if selected:
         rel = item["series"]
         color = colors[i % len(colors)]
         
+        # 凡例ラベルに現在値を表示（昇順に並ぶ）
         fig.add_trace(go.Scatter(x=rel.index, y=rel, name=f"{t} ({item['last_val']:.1f}%)", line=dict(width=2.5, color=color)))
 
         # 参照点プロット
@@ -122,7 +122,7 @@ if selected:
                 fig.add_trace(go.Scatter(x=[data.index[-lb]], y=[v], mode='markers', marker=dict(size=8, symbol=sym, color=color), showlegend=False))
             except: pass
         
-        # 現在値ラベル
+        # 現在地テキストラベル
         fig.add_trace(go.Scatter(x=[rel.index[-1]], y=[item['last_val']], mode='markers+text', text=[f"{t}"], textposition="middle right", marker=dict(size=8, color=color), showlegend=False))
 
     fig.add_vline(x=data.index[-anchor_days], line_dash="dash", line_color="white", opacity=0.5)
@@ -131,4 +131,4 @@ if selected:
     fig.update_layout(template="plotly_dark", height=700, hovermode="x unified", legend=dict(traceorder="normal"))
     st.plotly_chart(fig, use_container_width=True)
 
-st.caption("※凡例は現在値の降順で並んでいます。色が被る場合は銘柄数を絞ってください。")
+st.caption("※凡例は現在値の昇順（低い順）で並んでいます。CLR戦略では最下位（最も安い）銘柄を特定しやすくなります。")
