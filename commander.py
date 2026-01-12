@@ -2,86 +2,107 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
-import plotly.express as px
 from datetime import datetime, timedelta
 
-# ページ設定
-st.set_page_config(layout="wide", page_title="Market Commander Alpha")
-st.title("🏹 超長期成績最大化・運用司令室")
+# ==========================================================
+# 1. 規約設定（鋼の原則）
+# ==========================================================
+st.set_page_config(layout="wide", page_title="Master Strategy Terminal")
+st.title("🚀 超長期成績最大化：統合司令部")
 
-# --- 定数設定 ---
-WORLD_CAPE_PCT = 0.89  
-MACRO_FORCED_DEFENSE = True 
+# サイドバー：環境認識
+with st.sidebar:
+    st.header("🌍 環境認識")
+    cape_pct = st.slider("ワールドCAPE％タイル", 0.0, 1.0, 0.45) # ここでフェーズが決まる
+    st.divider()
+    if cape_pct < 0.50:
+        st.success("推奨フェーズ: CLR (逆張り/平均回帰)")
+        st.info("理由: 割安圏では『安さ』というエッジがトレンドを上回るため。")
+    else:
+        st.warning("推奨フェーズ: CM (順張り/トレンド)")
+        st.info("理由: 割高圏では『勢い』のみがリスクを上回るため。")
+
+# 銘柄リスト
 TICKER_MAP = {"N225": "1321.T", "TPX": "1306.T", "JREIT": "1343.T", "GROW": "2516.T", "JDEF": "1399.T", "JVLU": "1593.T", "JQ": "2636.T"}
-SHORT_HAND_TICKERS = ["SPY", "QQQ", "NOBL", "FDD", "VWO", "GLD", "SLV", "TLT", "N225", "TPX", "GROW", "JDEF", "VT", "VTV", "MTUM", "QUAL", "JVLU", "JQ", "FEZ", "VNQI", "VYM", "SCHD"]
-HIGH_BETA = ["SPY", "QQQ", "VTV", "MTUM", "FEZ", "VWO", "N225", "TPX", "GROW", "JVLU", "VNQ", "JREIT", "VNQI", "QUAL", "VT", "NOBL"]
-PROFIT_MARGINS = {"FDD": 0.017, "JQ": 0.206, "N225": 0.20}
+TICKERS = ["SPY", "QQQ", "NOBL", "FDD", "VWO", "N225", "TPX", "GROW", "JDEF", "VT", "VTV", "MTUM", "QUAL", "JVLU", "JQ", "FEZ", "VNQI", "SCHD", "VYM", "JREIT"]
+PROFIT_MARGINS = {"N225": 0.20, "TPX": 0.10, "FDD": 0.017, "JQ": 0.206, "JREIT": 0.05}
 
-# --- ロジック関数 ---
-def calculate_tsi_energy(series):
-    diff = series.diff()
+# ==========================================================
+# 2. 関数：TSI Energy (最速トリガー)
+# ==========================================================
+def get_energy_status(prices):
+    diff = prices.diff()
     ema_v = diff.ewm(span=25, adjust=False).mean().ewm(span=13, adjust=False).mean()
     a_ema_v = diff.abs().ewm(span=25, adjust=False).mean().ewm(span=13, adjust=False).mean()
-    tsi = (ema_v / a_ema_v)
-    energy = "OK" if tsi.iloc[-1] > tsi.ewm(span=7).mean().iloc[-1] else "DEAD"
-    return energy
+    tsi = ema_v / a_ema_v
+    signal = tsi.ewm(span=7).mean()
+    return "OK" if tsi.iloc[-1] > signal.iloc[-1] else "DEAD", tsi.iloc[-1]
 
-def get_cm_history(series):
-    def calc_rg(off):
-        idx = -1 - off
-        try:
-            return ((series.iloc[idx]/series.iloc[idx-63]-1) + (series.iloc[idx]/series.iloc[idx-126]-1) + (series.iloc[idx]/series.iloc[idx-252]-1))/3
-        except: return 0.0
-    return calc_rg(0), calc_rg(21), calc_rg(63)
-
-# --- データ取得 ---
+# ==========================================================
+# 3. データ取得 & 演算
+# ==========================================================
 @st.cache_data(ttl=3600)
-def load_data():
-    tickers = [TICKER_MAP.get(t, t) for t in SHORT_HAND_TICKERS]
-    data = yf.download(tickers, start=datetime.now()-timedelta(days=730), progress=False, auto_adjust=True)['Close']
+def load_data(ticker_list):
+    end = datetime.now()
+    start = end - timedelta(days=365*6)
+    data = yf.download([TICKER_MAP.get(t, t) for t in ticker_list], start=start, progress=False, auto_adjust=True)['Close']
     return data.rename(columns={v: k for k, v in TICKER_MAP.items()}).ffill()
 
-df_price = load_data()
+data = load_data(TICKERS)
 
-# --- 計算実行 ---
-results = []
-for t in SHORT_HAND_TICKERS:
-    if t not in df_price.columns: continue
-    p = df_price[t]
-    energy = calculate_tsi_energy(p)
-    rg_now, rg_1m, rg_3m = get_cm_history(p)
-    ma200 = p.rolling(200).mean().iloc[-1]
+clr_results = []
+cm_results = []
+
+for t in TICKERS:
+    if t not in data.columns: continue
+    p = data[t]
+    p_now = p.iloc[-1]
+    
+    # --- CLRロジック (1年前アンカー) ---
+    try:
+        c_ref = p.iloc[-252]
+        p3y, p4y, p5y = p.iloc[-252*3], p.iloc[-252*4], p.iloc[-252*5]
+        clr_val = ((c_ref/p3y-1) + (c_ref/p4y-1) + (c_ref/p5y-1)) / 3
+    except: clr_val = 0
+    
+    # --- CMロジック (1ヶ月前アンカー) ---
+    try:
+        c_m1 = p.iloc[-21] # 1ヶ月前
+        c_m4 = p.iloc[-21-63] # 4ヶ月前
+        cm_val = (c_m1 / c_m4) - 1 # 直近1ヶ月を除いた3ヶ月の勢い
+    except: cm_val = 0
+
+    # 共通計算：ボラドラ & Energy
     ret = p.pct_change().dropna()
-    sd_all = ret.tail(252).std() * np.sqrt(252)
-    sd_d = max(ret[ret<0].tail(252).std() * np.sqrt(252), 1e-6)
-    v_drag = (sd_all ** 2) / 2
-    net_rg = rg_now - v_drag
-    geta = (PROFIT_MARGINS.get(t, 0) * 0.20315) * max(0, net_rg)
-    score = net_rg + geta
-    bias_200 = ((p.iloc[-1] / ma200) - 1) * 100
-    m1_s, m3_s, ma_s = ("U" if rg_now > rg_1m else "D"), ("U" if rg_now > rg_3m else "D"), ("U" if p.iloc[-1] > ma200 else "D")
+    v_drag = ( (ret.tail(252*3).std() * np.sqrt(252))**2 ) / 2
+    energy_s, tsi_val = get_energy_status(p)
+    ma200 = p.rolling(200).mean().iloc[-1]
 
-    # 判定
-    if score < 0: d_judge = "🚨 SELL(Score<0)"
-    elif ma_s == "D": d_judge = "⚠️ EXIT(MA200 Down)"
-    elif energy == "DEAD" and (m1_s == "D" or m3_s == "D"): d_judge = "📉 REDUCE(50%)"
-    else: d_judge = "✅ KEEP"
+    # --- 判定：CLR (CAPE < 50% 時) ---
+    score_clr = clr_val - v_drag + (PROFIT_MARGINS.get(t, 0) * 0.20315) * max(0, clr_val - v_drag)
+    judge_clr = "🚀 FULL" if score_clr > 0.05 and energy_s == "OK" else "⏳ WAIT"
+    clr_results.append({"Ticker": t, "Judge": judge_clr, "Score": score_clr, "Energy": energy_s, "CLR": clr_val, "V-Drag": v_drag})
 
-    results.append({"Ticker": t, "Judge": d_judge, "Score": score, "NetRG": net_rg, "CM": rg_now, "Eng/1/3": f"{energy}/{m1_s}/{m3_s}", "Bias200": bias_200, "SD_D": sd_d})
+    # --- 判定：CM (CAPE > 50% 時) ---
+    score_cm = cm_val - v_drag
+    is_trend = p_now > ma200
+    judge_cm = "🔥 FULL" if is_trend and energy_s == "OK" and score_cm > 0 else "🚨 EXIT"
+    cm_results.append({"Ticker": t, "Judge": judge_cm, "Speed": score_cm, "Energy": energy_s, "AboveMA200": "Yes" if is_trend else "No"})
 
-res_df = pd.DataFrame(results).set_index("Ticker")
+# ==========================================================
+# 4. ブラウザ表示（並列パネル）
+# ==========================================================
+col1, col2 = st.columns(2)
 
-# --- ブラウザ画面表示 ---
-col1, col2 = st.columns([1, 1])
 with col1:
-    st.subheader("📋 執行判定リスト")
-    st.dataframe(res_df[["Judge", "Score", "Eng/1/3", "Bias200"]].sort_values("Score", ascending=False), height=450)
-with col2:
-    st.subheader("🛣️ 200MA乖離率 (場所の判定)")
-    fig_bias = px.bar(res_df.sort_values("Bias200"), x="Bias200", y=res_df.sort_values("Bias200").index, orientation='h', color="Bias200", color_continuous_scale="RdBu", range_color=[-15, 15])
-    st.plotly_chart(fig_bias, use_container_width=True)
+    st.subheader("📉 CLRセクション (1年前基準)")
+    if cape_pct < 0.50: st.caption("✅ 現在の推奨戦略: 逆張りエッジ最大化モード")
+    st.dataframe(pd.DataFrame(clr_results).set_index("Ticker").sort_values("Score", ascending=False), height=600)
 
-st.subheader("🎯 戦略マップ (縦:実力 / 横:リスク / 色:期待値)")
-fig_map = px.scatter(res_df.reset_index(), x="SD_D", y="NetRG", color="Score", text="Ticker", size=[20]*len(res_df), color_continuous_scale="RdYlGn", hover_data=["Eng/1/3", "Judge", "Bias200"])
-fig_map.update_traces(textposition='top center')
-st.plotly_chart(fig_map, use_container_width=True)
+with col2:
+    st.subheader("📈 CMセクション (1ヶ月前基準)")
+    if cape_pct >= 0.50: st.caption("✅ 現在の推奨戦略: 順張りトレンド追随モード")
+    st.dataframe(pd.DataFrame(cm_results).set_index("Ticker").sort_values("Speed", ascending=False), height=600)
+
+st.divider()
+st.write("※超長期成績規約：半分投入は禁止。Score > 0 かつ Energy OK の場合のみフルコミットする。")
